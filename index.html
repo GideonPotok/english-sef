@@ -171,14 +171,60 @@ async function sef(path) {
 
 /* ---------- Machine translation (Google's public endpoint, no key) ---------- */
 const tcache = new Map(Object.entries(store.get('tr', {})));
-let tdirty = 0, translateBroken = false;
+let tdirty = 0;
 function saveCache() { if (!tdirty) return; tdirty = 0; let obj = Object.fromEntries(tcache), s = JSON.stringify(obj); while (s.length > 1.5e6 && tcache.size) { [...tcache.keys()].slice(0, Math.ceil(tcache.size/2)).forEach(k => tcache.delete(k)); obj = Object.fromEntries(tcache); s = JSON.stringify(obj); } store.set('tr', obj); }
 setInterval(saveCache, 4000);
-async function gtx(text) {
-  const r = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=he&tl=en&dt=t', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}, body:'q='+encodeURIComponent(text) });
-  if (!r.ok) throw new Error('translate: HTTP '+r.status);
-  const raw = await r.text(); let j; try { j = JSON.parse(raw); } catch { throw new Error('translate: non-JSON reply: '+raw.slice(0,120)); }
-  return (j[0]||[]).map(s => s[0]).join('');
+let translateBroken = false, translateError = '';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Short payloads go as GET (the well-trodden path for this endpoint); long ones as a form POST. One retry after a pause on 429 or an HTML reply.
+async function gtx(text, sl='he', tl='en') {
+  const base = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&ie=UTF-8&oe=UTF-8`;
+  const q = encodeURIComponent(text);
+  for (let attempt = 0; ; attempt++) {
+    let r, raw;
+    try {
+      r = q.length < 1800 ? await fetch(base + '&q=' + q) : await fetch(base, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}, body:'q='+q });
+      raw = await r.text();
+    } catch (e) { throw new Error('translate: request blocked (' + (e.message||e) + ')'); }
+    let j = null; try { j = JSON.parse(raw); } catch {}
+    if (r.ok && j) return (j[0]||[]).map(s => s[0]).join('');
+    const msg = !r.ok ? 'translate: HTTP ' + r.status + (r.status===429 ? ' (rate limited)' : '') : 'translate: non-JSON reply: ' + raw.slice(0,100).replace(/\s+/g,' ');
+    if (attempt === 0 && (r.status === 429 || r.status >= 500 || r.ok)) { await sleep(2500); continue; }
+    throw new Error(msg);
+  }
+}// Translate many strings: batch them joined by blank lines, fall back to singles when the batch splits wrong.
+async function translateMany(texts, onEach, sl='he', tl='en') {
+  const todo = [];
+  texts.forEach((t, i) => { const k = sl+'|'+t; if (tcache.has(k)) onEach(i, tcache.get(k)); else if (!t.trim() || (sl==='he' && !HEB.test(t))) onEach(i, t); else todo.push(i); });
+  const batches = []; let cur = [], len = 0;
+  for (const i of todo) { const L = texts[i].length; if (cur.length && (len + L > 2600 || cur.length >= 30)) { batches.push(cur); cur=[]; len=0; } cur.push(i); len += L + 2; }
+  if (cur.length) batches.push(cur);
+  const SEP = '\n\n';
+  let active = 0; const queue = batches.slice();
+  await new Promise(resolve => {
+    const next = () => {
+      if (!queue.length && !active) return resolve();
+      while (active < 2 && queue.length) {
+        const b = queue.shift(); active++;
+        (async () => {
+          try {
+            let out = null;
+            if (b.length > 1) {
+              const joined = b.map(i => texts[i].replace(/\n+/g,' ')).join(SEP);
+              const res = await gtx(joined, sl, tl);
+              const parts = res.split(/\n\s*\n/);
+              if (parts.length === b.length) out = parts;
+            }
+            if (!out) { out = []; for (const i of b) out.push(await gtx(texts[i].replace(/\n+/g,' '), sl, tl)); }
+            b.forEach((i, j) => { const v = out[j].trim(); tcache.set(sl+'|'+texts[i], v); tdirty = 1; onEach(i, v); });
+          } catch (e) {
+            translateBroken = true; translateError = e.message || String(e); b.forEach(i => onEach(i, null, e));
+          } finally { active--; next(); }
+        })();
+      }
+    };
+    next();
+  });
 }
 async function translateMany(texts, onEach) {
   const todo = [];
@@ -190,7 +236,7 @@ async function translateMany(texts, onEach) {
   await new Promise(resolve => {
     const next = () => {
       if (!queue.length && !active) return resolve();
-      while (active < 3 && queue.length) {
+      while (active < 2 && queue.length) {
         const b = queue.shift(); active++;
         (async () => {
           try {
@@ -198,7 +244,7 @@ async function translateMany(texts, onEach) {
             if (b.length > 1) { const res = await gtx(b.map(i => texts[i]).join('\n\n')); const parts = res.split(/\n\s*\n/); if (parts.length === b.length) out = parts; }
             if (!out) { out = []; for (const i of b) out.push(await gtx(texts[i])); }
             b.forEach((i, j) => { const v = out[j].trim(); tcache.set(texts[i], v); tdirty = 1; onEach(i, v); });
-          } catch (e) { translateBroken = true; b.forEach(i => onEach(i, null, e)); }
+          } catch (e) { translateBroken = true; translateError = e.message || String(e); b.forEach(i => onEach(i, null, e)); }
           finally { active--; next(); }
         })();
       }
@@ -379,9 +425,9 @@ async function loadText(ref) {
     await translateMany(needMT.map(x => x.src), (i, v) => {
       const x = needMT[i]; x.el.classList.remove('pending');
       if (v) { x.el.textContent = v; x.el.classList.add('mt'); } else { x.el.classList.add('missing'); x.el.textContent = 'No translation available.'; }
-      done++; if (tok === loadToken) { prog.style.width = (100*done/needMT.length)+'%'; status.textContent = done < needMT.length ? `Translating ${done}/${needMT.length}` : (translateBroken ? 'Translation service unreachable' : ''); if (done === needMT.length) setTimeout(() => { if (tok===loadToken) prog.style.width = '0%'; }, 600); }
+      done++; if (tok === loadToken) { prog.style.width = (100*done/needMT.length)+'%'; status.textContent = done < needMT.length ? `Translating ${done}/${needMT.length}` : (translateBroken ? 'Translation failed' : ''); if (done === needMT.length) setTimeout(() => { if (tok===loadToken) prog.style.width = '0%'; }, 600); }
     });
-    if (translateBroken && tok === loadToken) main.insertBefore(el('div', {class:'banner err'}, 'The translation service could not be reached; untranslated segments show the Hebrew only.'), body);
+    if (translateBroken && tok === loadToken) main.insertBefore(el('div', {class:'banner err'}, 'Translation failed (' + translateError + '); untranslated segments show the Hebrew only.'), body);
   }
 }
 
