@@ -185,21 +185,23 @@ async function gtx(text, sl='he', tl='en') {
     try {
       r = q.length < 1800 ? await fetch(base + '&q=' + q) : await fetch(base, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}, body:'q='+q });
       raw = await r.text();
-    } catch (e) { throw new Error('translate: request blocked (' + (e.message||e) + ')'); }
+    } catch (e) { if (attempt === 0) { await sleep(3000); continue; } throw new Error('translate: request blocked (' + (e.message||e) + '), usually Google rate-limiting this IP for a while'); }
     let j = null; try { j = JSON.parse(raw); } catch {}
     if (r.ok && j) return (j[0]||[]).map(s => s[0]).join('');
     const msg = !r.ok ? 'translate: HTTP ' + r.status + (r.status===429 ? ' (rate limited)' : '') : 'translate: non-JSON reply: ' + raw.slice(0,100).replace(/\s+/g,' ');
     if (attempt === 0 && (r.status === 429 || r.status >= 500 || r.ok)) { await sleep(2500); continue; }
     throw new Error(msg);
   }
-}// Translate many strings: batch them joined by blank lines, fall back to singles when the batch splits wrong.
+}
+// Translate many strings: batch them joined by blank lines, fall back to singles when the batch splits wrong.
 async function translateMany(texts, onEach, sl='he', tl='en') {
   const todo = [];
   texts.forEach((t, i) => { const k = sl+'|'+t; if (tcache.has(k)) onEach(i, tcache.get(k)); else if (!t.trim() || (sl==='he' && !HEB.test(t))) onEach(i, t); else todo.push(i); });
   const batches = []; let cur = [], len = 0;
-  for (const i of todo) { const L = texts[i].length; if (cur.length && (len + L > 2600 || cur.length >= 30)) { batches.push(cur); cur=[]; len=0; } cur.push(i); len += L + 2; }
+  for (const i of todo) { const L = texts[i].length; if (cur.length && (len + L > 4200 || cur.length >= 40)) { batches.push(cur); cur=[]; len=0; } cur.push(i); len += L + 2; }
   if (cur.length) batches.push(cur);
   const SEP = '\n\n';
+  translateBroken = false;
   let active = 0; const queue = batches.slice();
   await new Promise(resolve => {
     const next = () => {
@@ -208,6 +210,7 @@ async function translateMany(texts, onEach, sl='he', tl='en') {
         const b = queue.shift(); active++;
         (async () => {
           try {
+            if (translateBroken) throw new Error(translateError || 'translator unavailable');
             let out = null;
             if (b.length > 1) {
               const joined = b.map(i => texts[i].replace(/\n+/g,' ')).join(SEP);
@@ -220,32 +223,6 @@ async function translateMany(texts, onEach, sl='he', tl='en') {
           } catch (e) {
             translateBroken = true; translateError = e.message || String(e); b.forEach(i => onEach(i, null, e));
           } finally { active--; next(); }
-        })();
-      }
-    };
-    next();
-  });
-}
-async function translateMany(texts, onEach) {
-  const todo = [];
-  texts.forEach((t, i) => { if (tcache.has(t)) onEach(i, tcache.get(t)); else if (!t.trim() || !HEB.test(t)) onEach(i, t); else todo.push(i); });
-  const batches = []; let cur = [], len = 0;
-  for (const i of todo) { const L = texts[i].length; if (cur.length && (len + L > 2600 || cur.length >= 30)) { batches.push(cur); cur=[]; len=0; } cur.push(i); len += L + 2; }
-  if (cur.length) batches.push(cur);
-  let active = 0; const queue = batches.slice();
-  await new Promise(resolve => {
-    const next = () => {
-      if (!queue.length && !active) return resolve();
-      while (active < 2 && queue.length) {
-        const b = queue.shift(); active++;
-        (async () => {
-          try {
-            let out = null;
-            if (b.length > 1) { const res = await gtx(b.map(i => texts[i]).join('\n\n')); const parts = res.split(/\n\s*\n/); if (parts.length === b.length) out = parts; }
-            if (!out) { out = []; for (const i of b) out.push(await gtx(texts[i])); }
-            b.forEach((i, j) => { const v = out[j].trim(); tcache.set(texts[i], v); tdirty = 1; onEach(i, v); });
-          } catch (e) { translateBroken = true; translateError = e.message || String(e); b.forEach(i => onEach(i, null, e)); }
-          finally { active--; next(); }
         })();
       }
     };
