@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Sefaria Reader">
+<meta name="theme-color" content="#f6f7f4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15181b" media="(prefers-color-scheme: dark)">
+<title>Sefaria Reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@400;500;700&family=Heebo:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+/* Layout: one column of segment rows; each row pairs the Hebrew (right) with Sefaria's English or a labelled machine translation (left). Tap a row for its commentaries. */
+:root{
+  --bg:#f6f7f4; --paper:#fdfdfb; --fg:#1c2024; --muted:#5d6670; --rule:#d9ddd6;
+  --accent:#1d6b5a; --accent-ink:#ffffff; --he:#8a5a00; --he-bg:#fbf3df;
+  --mt:#6b4fa0; --mt-bg:#efe9f8; --sel:#e9f2ef;
+  --f-ui:"Heebo",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+  --f-he:"Frank Ruhl Libre","David",Georgia,serif;
+  --f-en:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --fs:1.05rem;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#15181b; --paper:#1c2024; --fg:#e6e8e3; --muted:#9aa3ab; --rule:#2e343a;
+    --accent:#6fcbb3; --accent-ink:#0f1a17; --he:#e2b35a; --he-bg:#2a2416;
+    --mt:#b9a3e6; --mt-bg:#2a2338; --sel:#1f2a27; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15181b; --paper:#1c2024; --fg:#e6e8e3; --muted:#9aa3ab; --rule:#2e343a;
+  --accent:#6fcbb3; --accent-ink:#0f1a17; --he:#e2b35a; --he-bg:#2a2416;
+  --mt:#b9a3e6; --mt-bg:#2a2338; --sel:#1f2a27; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font:400 var(--fs)/1.55 var(--f-en);padding-bottom:env(safe-area-inset-bottom,0px)}
+button,input{font-family:var(--f-ui);font-size:1rem;color:inherit}
+button{cursor:pointer;background:none;border:1px solid var(--rule);border-radius:999px;padding:.35rem .8rem;line-height:1.2}
+button:hover{border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+a{color:var(--accent)}
+.hdr{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--rule);padding-top:env(safe-area-inset-top,0px)}
+.hdr-in{max-width:52rem;margin:0 auto;padding-inline:max(16px,env(safe-area-inset-left,0px)) max(16px,env(safe-area-inset-right,0px));padding-block:.6rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.brand{font:700 1.15rem/1 var(--f-he);white-space:nowrap;text-decoration:none;color:var(--fg)}
+.brand small{font:500 .7rem var(--f-ui);color:var(--muted);display:block;margin-top:.2rem;letter-spacing:.08em;text-transform:uppercase}
+.search{flex:1 1 14rem;min-width:0;position:relative}
+.search input{width:100%;border:1px solid var(--rule);background:var(--paper);border-radius:999px;padding:.5rem 2.4rem .5rem 1rem;font-size:1rem}
+.search .clear{position:absolute;right:.4rem;top:50%;transform:translateY(-50%);border:0;padding:.2rem .5rem;color:var(--muted)}
+.results{position:absolute;left:0;right:0;top:calc(100% + .4rem);background:var(--paper);border:1px solid var(--rule);border-radius:.8rem;box-shadow:0 10px 30px rgba(0,0,0,.12);max-height:70vh;overflow:auto;z-index:6}
+.results:empty{display:none}
+.res{padding:.6rem .9rem;border-bottom:1px solid var(--rule);cursor:pointer;display:flex;justify-content:space-between;gap:.8rem;align-items:baseline}
+.res:last-child{border-bottom:0}
+.res:hover,.res:focus{background:var(--bg)}
+.res .t{font-family:var(--f-ui);font-weight:500}
+.res .k{font-family:var(--f-ui);font-size:.8rem;color:var(--muted);white-space:nowrap}
+.res.he .t{font-family:var(--f-he);direction:rtl}
+.res.note{color:var(--muted);font-family:var(--f-ui);font-size:.85rem;cursor:default;display:block}
+.res.top{background:var(--sel)}
+.tools{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+.prog{height:2px;position:relative}
+.prog i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);width:0;transition:width .25s}
+main{max-width:52rem;margin:0 auto;padding-inline:max(16px,env(safe-area-inset-left,0px)) max(16px,env(safe-area-inset-right,0px));padding-block:1rem 4rem}
+.home h1{font:500 1.9rem/1.15 var(--f-he);margin:.6rem 0 .3rem;text-wrap:balance}
+.home p{color:var(--muted);font-family:var(--f-ui);max-width:36rem}
+.home h2,.recent h2{font:600 .75rem var(--f-ui);letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:1.4rem 0 .5rem}
+.cal{display:grid;grid-template-columns:repeat(auto-fill,minmax(14rem,1fr));gap:.5rem}
+.cal a{display:block;text-decoration:none;color:var(--fg);border:1px solid var(--rule);border-radius:.7rem;padding:.6rem .8rem;background:var(--paper)}
+.cal a:hover{border-color:var(--accent)}
+.cal .l{font:500 .72rem var(--f-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.cal .v{font:500 1.05rem/1.25 var(--f-ui);margin:.15rem 0}
+.cal .h{font-family:var(--f-he);direction:rtl;text-align:right;color:var(--he)}
+.recent ul{list-style:none;padding:0;margin:0;display:grid;gap:.3rem}
+.recent a{display:flex;justify-content:space-between;gap:1rem;text-decoration:none;color:var(--fg);padding:.5rem .7rem;border:1px solid var(--rule);border-radius:.6rem;font-family:var(--f-ui)}
+.recent a span:last-child{font-family:var(--f-he);color:var(--muted);direction:rtl}
+.banner{background:var(--he-bg);color:var(--he);border-radius:.6rem;padding:.6rem .9rem;font-family:var(--f-ui);font-size:.9rem;margin:.6rem 0}
+.banner.err{background:var(--mt-bg);color:var(--mt)}
+/* text head */
+.ah{margin:.4rem 0 1rem;border-bottom:1px solid var(--rule);padding-bottom:.8rem}
+.ah h1{font:600 1.8rem/1.15 var(--f-en);margin:.2rem 0;text-wrap:balance}
+.ah .he-title{font:500 1.3rem/1.2 var(--f-he);direction:rtl;text-align:right;color:var(--he);margin:0 0 .5rem}
+.meta{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;font-family:var(--f-ui);font-size:.85rem;margin-top:.5rem}
+.modes{display:inline-flex;border:1px solid var(--rule);border-radius:999px;overflow:hidden}
+.modes button{border:0;border-radius:0;padding:.35rem .75rem;font-size:.85rem}
+.modes button+button{border-left:1px solid var(--rule)}
+.chip{display:inline-block;border-radius:999px;padding:.2rem .6rem;font-weight:500;font-size:.78rem}
+.chip.mt{background:var(--mt-bg);color:var(--mt)} .chip.en{background:var(--sel);color:var(--accent)}
+.vers{font-size:.78rem;color:var(--muted);font-family:var(--f-ui);margin-top:.4rem}
+.status{margin-left:auto;font-family:var(--f-ui);font-size:.8rem;color:var(--muted)}
+.nav{display:flex;justify-content:space-between;gap:.6rem;margin:1.2rem 0}
+.nav button{font-size:.9rem}
+/* segments */
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:.4rem 1.4rem;padding:.7rem .6rem;border-radius:.5rem;border-bottom:1px solid var(--rule);cursor:pointer;position:relative}
+.seg:hover{background:var(--paper)}
+.seg.open{background:var(--sel)}
+.seg .n{position:absolute;left:.6rem;top:.75rem;font:500 .7rem var(--f-ui);color:var(--muted);font-variant-numeric:tabular-nums}
+.seg .he{grid-column:2;direction:rtl;text-align:right;font-family:var(--f-he);font-size:1.12em;line-height:1.75;unicode-bidi:isolate}
+.seg .en{grid-column:1;font-family:var(--f-en);padding-left:1.6rem;unicode-bidi:isolate}
+.seg .en.mt{color:var(--fg)} .seg .en.mt::before{content:"machine translation";display:block;font:500 .65rem var(--f-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--mt)}
+.seg .en.pending{color:var(--muted);font-family:var(--f-ui);font-size:.9em}
+.seg .en.missing{color:var(--muted);font-style:italic;font-size:.9em}
+.seg h3{grid-column:1/-1;margin:.6rem 0 0;font:600 .8rem var(--f-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.body[data-mode="he"] .seg{grid-template-columns:1fr} .body[data-mode="he"] .seg .en{display:none} .body[data-mode="he"] .seg .he{grid-column:1}
+.body[data-mode="en"] .seg{grid-template-columns:1fr} .body[data-mode="en"] .seg .he{display:none} .body[data-mode="en"] .seg .en{grid-column:1}
+@media (max-width:640px){
+  .seg{grid-template-columns:1fr}
+  .seg .he{grid-column:1;padding-left:0;order:1} .seg .en{grid-column:1;padding-left:0;padding-top:.1rem;order:2} .seg .n{order:0} .seg .links{order:3}
+  .seg .n{position:static;display:block}
+}
+.body[data-nikud="off"] .he .nk{display:none}
+.he b,.en b{font-weight:600}
+.he big{font-size:1.15em}
+/* commentary drawer */
+.links{grid-column:1/-1;background:var(--paper);border:1px solid var(--rule);border-radius:.6rem;padding:.6rem .8rem;margin-top:.4rem;cursor:default;font-family:var(--f-ui);font-size:.9rem}
+.links h4{margin:.2rem 0 .4rem;font:600 .72rem var(--f-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.links .grp{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.5rem}
+.links .grp button{font-size:.82rem;padding:.25rem .6rem;display:inline-flex;gap:.35rem;align-items:center}
+.links .grp button i{font-style:normal;font-size:.7rem;color:var(--muted)}
+.links .grp button.noen i{color:var(--mt)}
+.links .empty{color:var(--muted)}
+.foot{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);font:400 .8rem/1.5 var(--f-ui);color:var(--muted)}
+.skel{height:1em;background:var(--rule);border-radius:.3em;margin:.5em 0;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.5}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.fsz{display:inline-flex;gap:.2rem}.fsz button{padding:.3rem .6rem;font-family:var(--f-en)}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-in">
+    <a class="brand" href="#" id="brand">ספריא<small>Reader</small></a>
+    <div class="search">
+      <input id="q" type="search" placeholder="Reference or name: Bereshit 18, ברכות ב, Rashi on Genesis 18:1…" autocomplete="off" dir="auto" aria-label="Search Sefaria">
+      <button class="clear" id="clear" aria-label="Clear search" hidden>×</button>
+      <div class="results" id="results" role="listbox"></div>
+    </div>
+    <div class="tools">
+      <button id="nikud" aria-pressed="true" title="Show vowel points and cantillation">Nikud</button>
+      <span class="fsz"><button id="fsm" aria-label="Smaller text">A−</button><button id="fsp" aria-label="Larger text">A+</button></span>
+    </div>
+  </div>
+  <div class="prog"><i id="prog"></i></div>
+</header>
+<main id="main"></main>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, r=document) => r.querySelector(s);
+const el = (tag, attrs={}, ...kids) => { const e = document.createElement(tag); for (const [k,v] of Object.entries(attrs)) { if (k==='class') e.className=v; else if (k==='html') e.innerHTML=v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else if (v!==false && v!=null) e.setAttribute(k, v); } for (const k of kids) if (k!=null) e.append(k); return e; };
+const HEB = /[א-ת]/;
+const NIKUD = /[֑-ֽֿ-ׇׂׅׄ]/g;
+const store = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v);}catch{return d;} }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} } };
+const toUrl = ref => ref.replace(/ /g,'_').replace(/:/g,'.');
+const fromUrl = u => u.replace(/_/g,' ').replace(/\./g,':').replace(/(\D):(\d)/g,'$1 $2');
+
+/* ---------- Sefaria API ---------- */
+async function sef(path) {
+  const r = await fetch('https://www.sefaria.org' + path);
+  const raw = await r.text();
+  let j; try { j = JSON.parse(raw); } catch { throw new Error(`Sefaria replied with something other than JSON (HTTP ${r.status}): ${raw.slice(0,140).replace(/\s+/g,' ')}`); }
+  if (!r.ok || j.error) throw new Error(j.error || `Sefaria: HTTP ${r.status}`);
+  return j;
+}
+
+/* ---------- Machine translation (Google's public endpoint, no key) ---------- */
+const tcache = new Map(Object.entries(store.get('tr', {})));
+let tdirty = 0, translateBroken = false;
+function saveCache() { if (!tdirty) return; tdirty = 0; let obj = Object.fromEntries(tcache), s = JSON.stringify(obj); while (s.length > 1.5e6 && tcache.size) { [...tcache.keys()].slice(0, Math.ceil(tcache.size/2)).forEach(k => tcache.delete(k)); obj = Object.fromEntries(tcache); s = JSON.stringify(obj); } store.set('tr', obj); }
+setInterval(saveCache, 4000);
+async function gtx(text) {
+  const r = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=he&tl=en&dt=t', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}, body:'q='+encodeURIComponent(text) });
+  if (!r.ok) throw new Error('translate: HTTP '+r.status);
+  const raw = await r.text(); let j; try { j = JSON.parse(raw); } catch { throw new Error('translate: non-JSON reply: '+raw.slice(0,120)); }
+  return (j[0]||[]).map(s => s[0]).join('');
+}
+async function translateMany(texts, onEach) {
+  const todo = [];
+  texts.forEach((t, i) => { if (tcache.has(t)) onEach(i, tcache.get(t)); else if (!t.trim() || !HEB.test(t)) onEach(i, t); else todo.push(i); });
+  const batches = []; let cur = [], len = 0;
+  for (const i of todo) { const L = texts[i].length; if (cur.length && (len + L > 2600 || cur.length >= 30)) { batches.push(cur); cur=[]; len=0; } cur.push(i); len += L + 2; }
+  if (cur.length) batches.push(cur);
+  let active = 0; const queue = batches.slice();
+  await new Promise(resolve => {
+    const next = () => {
+      if (!queue.length && !active) return resolve();
+      while (active < 3 && queue.length) {
+        const b = queue.shift(); active++;
+        (async () => {
+          try {
+            let out = null;
+            if (b.length > 1) { const res = await gtx(b.map(i => texts[i]).join('\n\n')); const parts = res.split(/\n\s*\n/); if (parts.length === b.length) out = parts; }
+            if (!out) { out = []; for (const i of b) out.push(await gtx(texts[i])); }
+            b.forEach((i, j) => { const v = out[j].trim(); tcache.set(texts[i], v); tdirty = 1; onEach(i, v); });
+          } catch (e) { translateBroken = true; b.forEach(i => onEach(i, null, e)); }
+          finally { active--; next(); }
+        })();
+      }
+    };
+    next();
+  });
+}
+
+/* ---------- State ---------- */
+const main = $('#main'), prog = $('#prog');
+let mode = store.get('mode', 'both');
+let nikud = store.get('nikud', true); $('#nikud').setAttribute('aria-pressed', String(nikud));
+$('#nikud').onclick = () => { nikud = !nikud; store.set('nikud', nikud); $('#nikud').setAttribute('aria-pressed', String(nikud)); const b = $('.body'); if (b) b.dataset.nikud = nikud ? 'on' : 'off'; };
+let fs = store.get('fs', 1.05); document.documentElement.style.setProperty('--fs', fs+'rem');
+$('#fsm').onclick = () => { fs = Math.max(.85, +(fs-.08).toFixed(2)); store.set('fs', fs); document.documentElement.style.setProperty('--fs', fs+'rem'); };
+$('#fsp').onclick = () => { fs = Math.min(1.6, +(fs+.08).toFixed(2)); store.set('fs', fs); document.documentElement.style.setProperty('--fs', fs+'rem'); };
+let recents = store.get('recents', []);
+const remember = (ref, he) => { recents = [{ref, he}, ...recents.filter(r => r.ref !== ref)].slice(0, 12); store.set('recents', recents); };
+const go = ref => { location.hash = '#' + encodeURIComponent(toUrl(ref)); };
+window.addEventListener('hashchange', route);
+let loadToken = 0;
+function route() { const h = decodeURIComponent(location.hash.slice(1)).trim(); closeResults(); if (!h) renderHome(); else loadText(fromUrl(h)); window.scrollTo(0,0); }
+
+/* ---------- Home: today's learning from Sefaria's calendar ---------- */
+async function renderHome() {
+  const tok = ++loadToken;
+  main.replaceChildren(el('section', {class:'home'},
+    el('h1', {}, 'Sefaria, Hebrew and English together.'),
+    el('p', {}, 'Open any reference. Where Sefaria has an English translation you get it beside the Hebrew; where it has none (most commentaries), the reader fills in a machine translation and says so. Tap a verse for its commentaries.'),
+    el('h2', {}, 'Today on the calendar'), el('div', {class:'cal', id:'cal'}, ...[1,2,3].map(()=>el('div', {class:'skel'}))),
+    recents.length ? el('div', {class:'recent'}, el('h2', {}, 'Recent'), el('ul', {}, ...recents.map(r => el('li', {}, el('a', {href:'#'+encodeURIComponent(toUrl(r.ref))}, el('span',{},r.ref), el('span',{},r.he||'')))))) : null));
+  try {
+    const c = await sef('/api/calendars');
+    if (tok !== loadToken) return;
+    const items = (c.calendar_items||[]).filter(i => i.ref);
+    $('#cal').replaceChildren(...items.map(i => el('a', {href:'#'+encodeURIComponent(toUrl(i.ref))}, el('div', {class:'l'}, i.title.en), el('div', {class:'v'}, i.displayValue.en), el('div', {class:'h'}, i.displayValue.he))));
+  } catch (e) { if (tok === loadToken) $('#cal').replaceChildren(el('div', {class:'banner err'}, 'Could not load the calendar: '+e.message)); }
+}
+
+/* ---------- Search via Sefaria's name resolver ---------- */
+const q = $('#q'), results = $('#results'), clearBtn = $('#clear');
+let sTimer, sToken = 0;
+q.addEventListener('input', () => { clearBtn.hidden = !q.value; clearTimeout(sTimer); sTimer = setTimeout(search, 220); });
+q.addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(sTimer); search(true); } if (e.key === 'Escape') closeResults(); if (e.key === 'ArrowDown') { const f = results.querySelector('.res[tabindex]'); if (f) { e.preventDefault(); f.focus(); } } });
+results.addEventListener('keydown', e => { const items = [...results.querySelectorAll('.res[tabindex]')]; const i = items.indexOf(document.activeElement); if (e.key==='ArrowDown' && items[i+1]) { e.preventDefault(); items[i+1].focus(); } if (e.key==='ArrowUp') { e.preventDefault(); (items[i-1]||q).focus(); } if (e.key==='Enter' && i>=0) items[i].click(); if (e.key==='Escape') { closeResults(); q.focus(); } });
+clearBtn.onclick = () => { q.value=''; clearBtn.hidden = true; closeResults(); q.focus(); };
+document.addEventListener('click', e => { if (!e.target.closest('.search')) closeResults(); });
+function closeResults() { results.replaceChildren(); }
+async function search(enter=false) {
+  const text = q.value.trim(); const tok = ++sToken;
+  if (text.length < 2) return closeResults();
+  results.replaceChildren(el('div', {class:'res note'}, 'Looking up…'));
+  try {
+    const r = await sef('/api/name/' + encodeURIComponent(text) + '?limit=10');
+    if (tok !== sToken) return;
+    if (enter && r.is_ref && r.ref) { go(r.ref); q.blur(); closeResults(); return; }
+    const rows = [];
+    if (r.is_ref && r.ref) rows.push(el('div', {class:'res top', role:'option', tabindex:0, onclick:()=>{ go(r.ref); q.blur(); }}, el('span', {class:'t'}, 'Open ' + r.ref), el('span', {class:'k'}, r.is_range ? 'range' : r.is_segment ? 'segment' : r.is_section ? 'section' : 'book')));
+    for (const c of (r.completion_objects||[])) {
+      if (c.type !== 'ref') continue; if (r.is_ref && c.key === r.ref) continue;
+      rows.push(el('div', {class:'res'+(HEB.test(c.title)?' he':''), role:'option', tabindex:0, onclick:()=>{ go(c.key); q.blur(); }}, el('span', {class:'t'}, c.title), el('span', {class:'k'}, c.key)));
+    }
+    if (!rows.length) rows.push(el('div', {class:'res note'}, 'No reference matched. Try a book and chapter, e.g. “Berakhot 2a” or “Shemot 3”.'));
+    results.replaceChildren(...rows);
+  } catch (e) { if (tok === sToken) results.replaceChildren(el('div', {class:'res note'}, 'Lookup failed: ' + e.message)); }
+}
+
+/* ---------- Text view ---------- */
+const depthOf = t => Array.isArray(t) ? 1 + depthOf(t[0] ?? '') : 0;
+function nextAddr(a) { const m = /^(\d+)([ab])$/.exec(String(a)); if (m) return m[2]==='a' ? m[1]+'b' : (+m[1]+1)+'a'; const n = +a; return isNaN(n) ? a : n+1; }
+// Flatten possibly nested text arrays into [{path:[...], text}], numbering from `sections`.
+function flatten(text, sections, textDepth) {
+  const out = []; const d = depthOf(text);
+  if (d === 0) { out.push({path: sections.slice(), text: String(text||'')}); return out; }
+  const top = Math.max(0, (textDepth || sections.length) - d); // structural level of the outermost array
+  const lead = sections.slice(0, top);
+  (function walk(arr, level, path, first) {
+    let addr = (first && sections[top+level] != null) ? sections[top+level] : 1;
+    arr.forEach((item, idx) => {
+      const p = [...path, addr];
+      if (level === d-1) out.push({path:[...lead, ...p], text:String(item||'')});
+      else walk(item||[], level+1, p, first && idx===0);
+      addr = nextAddr(addr);
+    });
+  })(text, 0, [], true);
+  return out;
+}
+const refPrefix = ref => ref.replace(/\s[\d:ab\-–]+$/,'');
+const sanitize = html => { const d = new DOMParser().parseFromString('<div>'+html+'</div>', 'text/html'); d.querySelectorAll('script,style,img,iframe,a').forEach(n => n.replaceWith(...n.childNodes)); d.querySelectorAll('*').forEach(n => { for (const a of [...n.attributes]) n.removeAttribute(a.name); }); return d.body.firstChild.innerHTML; };
+const plain = html => { const d = document.createElement('div'); d.innerHTML = html; return d.textContent.replace(/\s+/g,' ').trim(); };
+// Wrap nikud/te'amim in spans so the Nikud toggle can hide them.
+const markNikud = html => html.replace(NIKUD, m => '<span class="nk">'+m+'</span>');
+
+async function loadText(ref) {
+  const tok = ++loadToken; prog.style.width = '0%';
+  main.replaceChildren(el('div', {class:'ah'}, el('div', {class:'skel', style:'width:55%;height:1.8rem'}), el('div', {class:'skel', style:'width:35%'})), ...[90,100,80,95].map(w => el('div', {class:'skel', style:`width:${w}%`})));
+  let data;
+  try {
+    data = await sef('/api/v3/texts/' + encodeURIComponent(toUrl(ref)) + '?version=primary&version=translation&return_format=strip_only_footnotes');
+    // Some proxies collapse the repeated `version` param; fetch the translation separately if it is missing.
+    if (!data.versions.some(v => v.language === 'en') && !(data.warnings||[]).some(w => w.translation)) {
+      const d2 = await sef('/api/v3/texts/' + encodeURIComponent(toUrl(ref)) + '?version=translation&return_format=strip_only_footnotes').catch(()=>null);
+      if (d2?.versions?.length) data.versions.push(...d2.versions);
+    }
+  } catch (e) { if (tok===loadToken) main.replaceChildren(el('div', {class:'banner err'}, `Could not load “${ref}”: ${e.message}`), el('p', {}, el('a', {href:'#'}, 'Back to today'))); return; }
+  if (tok !== loadToken) return;
+  const heV = data.versions.find(v => v.isPrimary || v.language === 'he') || data.versions[0];
+  const enV = data.versions.find(v => v.language === 'en' && v !== heV) || null;
+  const heSegs = heV ? flatten(heV.text, data.sections, data.textDepth) : [];
+  const enSegs = enV ? flatten(enV.text, data.sections, data.textDepth) : [];
+  const enByKey = new Map(enSegs.map(s => [s.path.join(':'), s.text]));
+  const prefix = refPrefix(data.ref);
+  const lead = data.sections.slice(0, Math.max(0, (data.textDepth||data.sections.length) - depthOf(heV?.text)));
+  remember(data.ref, data.heRef);
+  document.title = data.ref + ' · Sefaria Reader';
+
+  const head = el('div', {class:'ah'}, el('h1', {}, data.ref), el('p', {class:'he-title'}, data.heRef || ''));
+  const modes = el('div', {class:'modes', role:'group', 'aria-label':'Language'});
+  const modeBtns = { both:'Both', en:'English', he:'עברית' };
+  Object.entries(modeBtns).forEach(([k,v]) => modes.append(el('button', {'aria-pressed':String(mode===k), onclick:()=>{ mode=k; store.set('mode',k); body.dataset.mode=k; modes.querySelectorAll('button').forEach((b,i)=>b.setAttribute('aria-pressed', String(Object.keys(modeBtns)[i]===k))); }}, v)));
+  const status = el('span', {class:'status'});
+  const meta = el('div', {class:'meta'}, modes, enV ? el('span', {class:'chip en'}, 'Sefaria English') : el('span', {class:'chip mt'}, 'No English on Sefaria · machine translation'), el('a', {href:'https://www.sefaria.org/'+toUrl(data.ref), target:'_blank', rel:'noopener'}, 'sefaria.org ↗'), status);
+  const vers = el('div', {class:'vers'}, [heV && ('Hebrew: ' + heV.versionTitle), enV && ('English: ' + enV.versionTitle)].filter(Boolean).join(' · '));
+  head.append(meta, vers);
+  const body = el('section', {class:'body', 'data-mode':mode, 'data-nikud': nikud?'on':'off'});
+  const navBtns = () => el('div', {class:'nav'}, data.prev ? el('button', {onclick:()=>go(data.prev)}, '‹ ' + data.prev) : el('span'), data.next ? el('button', {onclick:()=>go(data.next)}, data.next + ' ›') : el('span'));
+  const foot = el('div', {class:'foot'}, 'Texts from Sefaria', heV?.license ? ` (${heV.license})` : '', '. Machine translation where marked; everything else is Sefaria’s own translation.');
+
+  const needMT = []; const rows = [];
+  let lastOuter = null;
+  heSegs.forEach((s, i) => {
+    if (!s.text.trim()) return;
+    const key = s.path.join(':');
+    const outer = s.path.length > lead.length + 1 ? s.path.slice(0,-1).join(':') : null;
+    if (outer !== null && outer !== lastOuter) { rows.push(el('h3', {}, (data.sectionNames?.[data.sectionNames.length-2] || '') + ' ' + outer)); lastOuter = outer; }
+    const segRef = prefix + ' ' + key;
+    const he = el('div', {class:'he', html: markNikud(sanitize(s.text))});
+    let en; const enText = enByKey.get(key);
+    if (enText && enText.trim()) en = el('div', {class:'en', html: sanitize(enText)});
+    else { en = el('div', {class:'en pending'}, 'Translating…'); needMT.push({i:needMT.length, el:en, src: plain(s.text).replace(NIKUD,'')}); }
+    const row = el('div', {class:'seg', 'data-ref':segRef, tabindex:0}, el('span', {class:'n'}, s.path[s.path.length-1]), en, he);
+    rows.push(row);
+  });
+  body.append(navBtns(), ...rows, navBtns());
+  main.replaceChildren(head, body, foot);
+
+  // Commentary drawer on tap
+  body.addEventListener('click', e => { if (e.target.closest('.links, a, button')) return; const row = e.target.closest('.seg'); if (row) toggleLinks(row); });
+  body.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.classList.contains('seg')) toggleLinks(e.target); });
+  async function toggleLinks(row) {
+    const open = row.querySelector('.links');
+    if (open) { open.remove(); row.classList.remove('open'); return; }
+    body.querySelectorAll('.seg.open').forEach(r => { r.querySelector('.links')?.remove(); r.classList.remove('open'); });
+    row.classList.add('open');
+    const box = el('div', {class:'links'}, el('h4', {}, 'On ' + row.dataset.ref), el('div', {class:'empty'}, 'Loading connections…'));
+    row.append(box);
+    try {
+      const links = await sef('/api/links/' + encodeURIComponent(toUrl(row.dataset.ref)) + '?with_text=0');
+      if (!row.contains(box)) return;
+      const groups = new Map();
+      for (const l of links) { const cat = l.category || 'Other'; const name = l.collectiveTitle?.en || l.index_title || l.sourceRef; const g = groups.get(cat) || new Map(); groups.set(cat, g); const it = g.get(name) || {name, he:l.collectiveTitle?.he, refs:[], hasEn:false}; it.refs.push(l.sourceRef); it.hasEn = it.hasEn || !!l.sourceHasEn; g.set(name, it); }
+      const order = ['Commentary','Targum','Midrash','Talmud','Halakhah','Chasidut','Kabbalah','Quoting Commentary','Reference'];
+      const cats = [...groups.keys()].sort((a,b) => (order.indexOf(a)+1||99) - (order.indexOf(b)+1||99));
+      box.replaceChildren(el('h4', {}, 'On ' + row.dataset.ref + ' · ' + links.length + ' connections'));
+      if (!cats.length) box.append(el('div', {class:'empty'}, 'Nothing links here yet.'));
+      for (const c of cats) {
+        const g = [...groups.get(c).values()];
+        box.append(el('h4', {}, c), el('div', {class:'grp'}, ...g.map(it => el('button', {class: it.hasEn ? '' : 'noen', title: it.hasEn ? 'Sefaria has English' : 'No English on Sefaria; will be machine translated', onclick:()=>go(it.refs.length === 1 ? it.refs[0] : commonRef(it.refs))}, it.name, el('i', {}, (it.refs.length > 1 ? it.refs.length + ' · ' : '') + (it.hasEn ? 'EN' : 'MT'))))));
+      }
+    } catch (e) { if (row.contains(box)) box.replaceChildren(el('div', {class:'empty'}, 'Could not load connections: ' + e.message)); }
+  }
+  // Several comments of one commentator on one verse share a parent ref ("Rashi on Genesis 18:1:1" → "Rashi on Genesis 18:1").
+  const commonRef = refs => { const a = refs[0]; const m = /^(.*):\d+$/.exec(a); return m && refs.every(r => r.startsWith(m[1]+':')) ? m[1] : a; };
+
+  // Machine-translate what Sefaria lacks, visible rows first.
+  if (needMT.length) {
+    let done = 0; status.textContent = `Translating 0/${needMT.length}`;
+    await translateMany(needMT.map(x => x.src), (i, v) => {
+      const x = needMT[i]; x.el.classList.remove('pending');
+      if (v) { x.el.textContent = v; x.el.classList.add('mt'); } else { x.el.classList.add('missing'); x.el.textContent = 'No translation available.'; }
+      done++; if (tok === loadToken) { prog.style.width = (100*done/needMT.length)+'%'; status.textContent = done < needMT.length ? `Translating ${done}/${needMT.length}` : (translateBroken ? 'Translation service unreachable' : ''); if (done === needMT.length) setTimeout(() => { if (tok===loadToken) prog.style.width = '0%'; }, 600); }
+    });
+    if (translateBroken && tok === loadToken) main.insertBefore(el('div', {class:'banner err'}, 'The translation service could not be reached; untranslated segments show the Hebrew only.'), body);
+  }
+}
+
+route();
+})();
+</script>
+</body>
+</html>
