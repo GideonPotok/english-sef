@@ -10,4 +10,4 @@ Live: https://gideonpotok.github.io/English-sef/
 - Nikud toggle, Both / English / Hebrew views, prev/next navigation.
 - No build, no dependencies: `index.html` is the whole app.
 
-Texts come from the [Sefaria API](https://developers.sefaria.org/) under their respective licenses. Machine translation uses Google Translate's public, keyless endpoint; if it is unreachable the Hebrew still shows.
+Texts come from the [Sefaria API](https://developers.sefaria.org/) under their respective licenses. Machine translation runs through a chain of providers: Google's free endpoint, Google's dictionary endpoint, then MyMemory; a provider that fails or rate-limits is rested and the next one takes over. Under **Translators** you can add a Claude API key (noticeably better on rabbinic Hebrew; can be set to go first) or a Google Cloud Translation key. Keys stay in the browser's localStorage.

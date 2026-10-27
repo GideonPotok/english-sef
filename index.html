@@ -129,6 +129,21 @@ main{max-width:52rem;margin:0 auto;padding-inline:max(16px,env(safe-area-inset-l
 @keyframes pulse{50%{opacity:.5}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 .fsz{display:inline-flex;gap:.2rem}.fsz button{padding:.3rem .6rem;font-family:var(--f-en)}
+
+.settings-back{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:30;display:flex;align-items:flex-end;justify-content:center;padding:1rem}
+@media (min-width:640px){.settings-back{align-items:center}}
+.settings{background:var(--paper);color:var(--fg);border:1px solid var(--rule);border-radius:1rem;padding:1.1rem 1.2rem;width:min(30rem,100%);max-height:90vh;overflow:auto;font-family:var(--f-ui);box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.settings h2{margin:0 0 .3rem;font:600 1.1rem var(--f-ui)}
+.settings p{margin:0 0 .8rem;color:var(--muted);font-size:.85rem}
+.settings .f{display:grid;gap:.25rem;margin:.7rem 0;font-size:.85rem}
+.settings .f span{font-weight:500}
+.settings .f input{width:100%;border:1px solid var(--rule);border-radius:.5rem;padding:.45rem .6rem;background:var(--bg);font:1rem var(--f-ui)}
+.settings .f small{color:var(--muted)}
+.settings .c{display:flex;gap:.4rem;align-items:center;font-size:.85rem;margin:.5rem 0}
+.settings .row{display:flex;gap:.5rem;flex-wrap:wrap;justify-content:flex-end;margin-top:1rem}
+.pstatus{list-style:none;margin:0 0 .6rem;padding:.5rem .7rem;border:1px solid var(--rule);border-radius:.6rem;font-size:.82rem;display:grid;gap:.2rem}
+.pstatus li{display:flex;justify-content:space-between;gap:1rem}
+.pstatus .ok{color:var(--accent)} .pstatus .bad{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -142,6 +157,7 @@ main{max-width:52rem;margin:0 auto;padding-inline:max(16px,env(safe-area-inset-l
     </div>
     <div class="tools">
       <button id="nikud" aria-pressed="true" title="Show vowel points and cantillation">Nikud</button>
+      <button id="settings" title="Translation settings" aria-label="Translation settings">Translators</button>
       <span class="fsz"><button id="fsm" aria-label="Smaller text">A−</button><button id="fsp" aria-label="Larger text">A+</button></span>
     </div>
   </div>
@@ -174,61 +190,144 @@ const tcache = new Map(Object.entries(store.get('tr', {})));
 let tdirty = 0;
 function saveCache() { if (!tdirty) return; tdirty = 0; let obj = Object.fromEntries(tcache), s = JSON.stringify(obj); while (s.length > 1.5e6 && tcache.size) { [...tcache.keys()].slice(0, Math.ceil(tcache.size/2)).forEach(k => tcache.delete(k)); obj = Object.fromEntries(tcache); s = JSON.stringify(obj); } store.set('tr', obj); }
 setInterval(saveCache, 4000);
-let translateBroken = false, translateError = '';
+const MT_DOMAIN = 'Jewish religious texts from Sefaria: Tanakh, Talmud, midrash, halakhah and rabbinic commentary; render divine names conventionally and keep technical terms recognizable';
+let translateBroken = false, translateError = '', translateVia = '';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-// Short payloads go as GET (the well-trodden path for this endpoint); long ones as a form POST. One retry after a pause on 429 or an HTML reply.
-async function gtx(text, sl='he', tl='en') {
-  const base = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&ie=UTF-8&oe=UTF-8`;
-  const q = encodeURIComponent(text);
-  for (let attempt = 0; ; attempt++) {
-    let r, raw;
-    try {
-      r = q.length < 1800 ? await fetch(base + '&q=' + q) : await fetch(base, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}, body:'q='+q });
-      raw = await r.text();
-    } catch (e) { if (attempt === 0) { await sleep(3000); continue; } throw new Error('translate: request blocked (' + (e.message||e) + '), usually Google rate-limiting this IP for a while'); }
-    let j = null; try { j = JSON.parse(raw); } catch {}
-    if (r.ok && j) return (j[0]||[]).map(s => s[0]).join('');
-    const msg = !r.ok ? 'translate: HTTP ' + r.status + (r.status===429 ? ' (rate limited)' : '') : 'translate: non-JSON reply: ' + raw.slice(0,100).replace(/\s+/g,' ');
-    if (attempt === 0 && (r.status === 429 || r.status >= 500 || r.ok)) { await sleep(2500); continue; }
-    throw new Error(msg);
-  }
+
+/* ---------- Translation providers ----------
+   Free, keyless endpoints first; anything you give a key for takes over when those are throttled
+   (or goes first, for Claude, if you say so in settings). A provider that fails is rested for a while
+   and the next one picks up the same batch. Keys live only in this browser's localStorage. */
+const TK = { get: () => store.get('tkeys', {}), set: v => store.set('tkeys', v) };
+const down = {};
+const cool = (name, ms) => { down[name] = Date.now() + ms; };
+const decodeEntities = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
+function chunk(t, n) { if (t.length <= n) return [t]; const out = []; let cur = ''; for (const s of t.split(/(?<=[.!?:;׃])\s+/)) { if ((cur + ' ' + s).length > n && cur) { out.push(cur); cur = s; } else cur = cur ? cur + ' ' + s : s; } if (cur) out.push(cur); return out.flatMap(p => p.length <= n ? [p] : p.match(new RegExp(`[\\s\\S]{1,${n}}`, 'g'))); }
+async function fetchJSON(url, init) {
+  let r; try { r = await fetch(url, init); } catch (e) { const err = new Error('request blocked (' + (e.message || e) + ')'); err.blocked = true; throw err; }
+  const raw = await r.text(); let j = null; try { j = JSON.parse(raw); } catch {}
+  if (!r.ok) { const e = new Error('HTTP ' + r.status + (j?.error?.message ? ': ' + j.error.message : '')); e.status = r.status; throw e; }
+  if (j === null) throw new Error('non-JSON reply: ' + raw.slice(0, 80).replace(/\s+/g, ' '));
+  return j;
 }
-// Translate many strings: batch them joined by blank lines, fall back to singles when the batch splits wrong.
-async function translateMany(texts, onEach, sl='he', tl='en') {
-  const todo = [];
-  texts.forEach((t, i) => { const k = sl+'|'+t; if (tcache.has(k)) onEach(i, tcache.get(k)); else if (!t.trim() || (sl==='he' && !HEB.test(t))) onEach(i, t); else todo.push(i); });
-  const batches = []; let cur = [], len = 0;
-  for (const i of todo) { const L = texts[i].length; if (cur.length && (len + L > 4200 || cur.length >= 40)) { batches.push(cur); cur=[]; len=0; } cur.push(i); len += L + 2; }
-  if (cur.length) batches.push(cur);
-  const SEP = '\n\n';
+const PROVIDERS = [
+  { name: 'Google', free: true, maxChars: 4200, maxItems: 40,
+    async run(texts, sl, tl) {
+      const one = async t => { const q = encodeURIComponent(t); const base = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&ie=UTF-8&oe=UTF-8`;
+        const j = q.length < 1800 ? await fetchJSON(base + '&q=' + q) : await fetchJSON(base, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'q=' + q });
+        return (j[0] || []).map(s => s[0]).join(''); };
+      if (texts.length === 1) return [await one(texts[0])];
+      const parts = (await one(texts.join('\n\n'))).split(/\n\s*\n/);
+      if (parts.length === texts.length) return parts;
+      const out = []; for (const t of texts) out.push(await one(t)); return out;
+    } },
+  { name: 'Google (dictionary endpoint)', free: true, maxChars: 3000, maxItems: 20,
+    async run(texts, sl, tl) {
+      const j = await fetchJSON(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${sl}&tl=${tl}` + texts.map(t => '&q=' + encodeURIComponent(t)).join(''));
+      const arr = Array.isArray(j) ? j.map(x => Array.isArray(x) ? x[0] : x) : null;
+      if (!arr || arr.length !== texts.length) throw new Error('unexpected reply shape');
+      return arr.map(String);
+    } },
+  { name: 'MyMemory', free: true, maxChars: 480, maxItems: 1,
+    async run(texts, sl, tl) {
+      const email = TK.get().mymemory; const out = [];
+      for (const t of texts) { const tr = [];
+        for (const c of chunk(t, 480)) {
+          const j = await fetchJSON(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(c)}&langpair=${sl}|${tl}${email ? '&de=' + encodeURIComponent(email) : ''}`);
+          if (j.responseStatus && String(j.responseStatus) !== '200') { const e = new Error(j.responseDetails || 'status ' + j.responseStatus); if (/QUOTA|LIMIT/i.test(e.message)) e.status = 429; throw e; }
+          tr.push(decodeEntities(j.responseData?.translatedText || '')); }
+        out.push(tr.join(' ')); }
+      return out;
+    } },
+  { name: 'Claude', key: 'anthropic', maxChars: 9000, maxItems: 25,
+    async run(texts, sl, tl) {
+      const k = TK.get(); const model = k.model || 'claude-haiku-5-5';
+      const from = sl === 'he' ? 'Hebrew' : 'English', to = tl === 'en' ? 'English' : 'Hebrew';
+      const prompt = `Translate each of the following ${from} passages into ${to}. Context: ${MT_DOMAIN}. Stay close to the source, keep names and terms of art in their conventional ${to} forms, add no commentary. Reply with ONLY a JSON array of exactly ${texts.length} strings in the same order.\n\n` + JSON.stringify(texts);
+      const j = await fetchJSON('https://api.anthropic.com/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': k.anthropic, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify({ model, max_tokens: 8192, messages: [{ role: 'user', content: prompt }] }) });
+      const text = (j.content || []).map(c => c.text || '').join('');
+      const m = text.match(/\[[\s\S]*\]/); let arr; try { arr = JSON.parse(m ? m[0] : text); } catch { throw new Error('reply was not a JSON array'); }
+      if (!Array.isArray(arr) || arr.length !== texts.length) throw new Error('unexpected reply shape');
+      return arr.map(String);
+    } },
+  { name: 'Google Cloud Translation', key: 'gcloud', maxChars: 20000, maxItems: 100,
+    async run(texts, sl, tl) {
+      const j = await fetchJSON('https://translation.googleapis.com/language/translate/v2?key=' + encodeURIComponent(TK.get().gcloud), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q: texts, source: sl, target: tl, format: 'text' }) });
+      const arr = j.data?.translations?.map(t => decodeEntities(t.translatedText));
+      if (!arr || arr.length !== texts.length) throw new Error('unexpected reply shape');
+      return arr;
+    } },
+];
+function providerOrder() {
+  const k = TK.get();
+  const free = PROVIDERS.filter(p => p.free), keyed = PROVIDERS.filter(p => p.key && k[p.key]);
+  if (k.claudeFirst && k.anthropic) return [...keyed.filter(p => p.key === 'anthropic'), ...free, ...keyed.filter(p => p.key !== 'anthropic')];
+  return [...free, ...keyed];
+}
+const providerStatus = () => providerOrder().map(p => ({ name: p.name, until: down[p.name] > Date.now() ? down[p.name] : 0 }));
+
+// Translate many strings, calling onEach(index, text) as each lands; onEach(index, null, err) when every provider gave up.
+async function translateMany(texts, onEach, sl = 'he', tl = 'en') {
+  let remaining = [];
+  texts.forEach((t, i) => { const k = sl + '|' + t; if (tcache.has(k)) onEach(i, tcache.get(k)); else if (!t.trim() || (sl === 'he' && !HEB.test(t))) onEach(i, t); else remaining.push(i); });
   translateBroken = false;
-  let active = 0; const queue = batches.slice();
-  await new Promise(resolve => {
-    const next = () => {
-      if (!queue.length && !active) return resolve();
-      while (active < 2 && queue.length) {
-        const b = queue.shift(); active++;
-        (async () => {
-          try {
-            if (translateBroken) throw new Error(translateError || 'translator unavailable');
-            let out = null;
-            if (b.length > 1) {
-              const joined = b.map(i => texts[i].replace(/\n+/g,' ')).join(SEP);
-              const res = await gtx(joined, sl, tl);
-              const parts = res.split(/\n\s*\n/);
-              if (parts.length === b.length) out = parts;
-            }
-            if (!out) { out = []; for (const i of b) out.push(await gtx(texts[i].replace(/\n+/g,' '), sl, tl)); }
-            b.forEach((i, j) => { const v = out[j].trim(); tcache.set(sl+'|'+texts[i], v); tdirty = 1; onEach(i, v); });
-          } catch (e) {
-            translateBroken = true; translateError = e.message || String(e); b.forEach(i => onEach(i, null, e));
-          } finally { active--; next(); }
-        })();
-      }
-    };
-    next();
-  });
+  const clean = i => texts[i].replace(/\n+/g, ' ');
+  while (remaining.length) {
+    const p = providerOrder().find(p => !(down[p.name] > Date.now()));
+    if (!p) break;
+    const batches = []; let cur = [], len = 0;
+    for (const i of remaining) { const L = clean(i).length; if (cur.length && (len + L > p.maxChars || cur.length >= p.maxItems)) { batches.push(cur); cur = []; len = 0; } cur.push(i); len += L + 2; }
+    if (cur.length) batches.push(cur);
+    remaining = [];
+    let active = 0; const queue = batches.slice();
+    await new Promise(resolve => {
+      const next = () => {
+        if (!queue.length && !active) return resolve();
+        while (active < 2 && queue.length) {
+          const b = queue.shift(); active++;
+          (async () => {
+            try {
+              if (down[p.name] > Date.now()) throw Object.assign(new Error('resting'), { requeue: true });
+              const out = await p.run(b.map(clean), sl, tl);
+              translateVia = p.name;
+              b.forEach((i, j) => { const v = String(out[j] ?? '').trim(); if (!v) throw new Error('empty translation'); tcache.set(sl + '|' + texts[i], v); tdirty = 1; onEach(i, v); });
+            } catch (e) {
+              if (!e.requeue) { translateError = p.name + ': ' + (e.message || e); cool(p.name, (e.status === 429 || e.blocked) ? 10 * 60e3 : 2 * 60e3); }
+              remaining.push(...b);
+            } finally { active--; next(); }
+          })().catch(() => {});
+        }
+      };
+      next();
+    });
+  }
+  if (remaining.length) { translateBroken = true; const err = new Error(translateError || 'no translation provider available'); remaining.forEach(i => onEach(i, null, err)); }
 }
+
+/* ---------- Settings panel: keys and provider status ---------- */
+function openSettings() {
+  document.querySelector('.settings-back')?.remove();
+  const k = TK.get();
+  const field = (id, label, type, value, hint) => el('label', { class: 'f' }, el('span', {}, label), el('input', { id, type, value: value || '', autocomplete: 'off', spellcheck: 'false' }), hint ? el('small', {}, hint) : null);
+  const status = el('ul', { class: 'pstatus' }, ...providerStatus().map(s => el('li', {}, el('span', {}, s.name), el('span', { class: s.until ? 'bad' : 'ok' }, s.until ? 'resting until ' + new Date(s.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'available'))));
+  const panel = el('div', { class: 'settings', role: 'dialog', 'aria-label': 'Translation settings' },
+    el('h2', {}, 'Translation'),
+    el('p', {}, 'Free Google endpoints are tried first, then MyMemory. Add a key and it takes over whenever those are rate-limited. Keys stay in this browser only.'),
+    status,
+    field('k-anthropic', 'Claude API key', 'password', k.anthropic, 'Best quality for rabbinic and literary Hebrew. Billed to your Anthropic account.'),
+    field('k-model', 'Claude model', 'text', k.model || 'claude-haiku-5-5'),
+    el('label', { class: 'c' }, el('input', { id: 'k-first', type: 'checkbox', checked: !!k.claudeFirst }), ' Use Claude first when a key is set'),
+    field('k-gcloud', 'Google Cloud Translation key', 'password', k.gcloud, 'Cloud Translation API v2; free tier covers 500k characters a month.'),
+    field('k-mymemory', 'MyMemory email', 'email', k.mymemory, 'Optional; raises MyMemory’s free daily quota.'),
+    el('div', { class: 'row' },
+      el('button', { onclick: () => { Object.keys(down).forEach(n => delete down[n]); openSettings(); } }, 'Reset resting providers'),
+      el('button', { onclick: () => back.remove() }, 'Cancel'),
+      el('button', { class: 'primary', onclick: () => { TK.set({ anthropic: $('#k-anthropic').value.trim(), model: $('#k-model').value.trim(), claudeFirst: $('#k-first').checked, gcloud: $('#k-gcloud').value.trim(), mymemory: $('#k-mymemory').value.trim() }); back.remove(); } }, 'Save')));
+  const back = el('div', { class: 'settings-back', onclick: e => { if (e.target === back) back.remove(); } }, panel);
+  document.body.append(back);
+  document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { back.remove(); document.removeEventListener('keydown', esc); } });
+}
+document.getElementById('settings')?.addEventListener('click', openSettings);
 
 /* ---------- State ---------- */
 const main = $('#main'), prog = $('#prog');
@@ -402,7 +501,7 @@ async function loadText(ref) {
     await translateMany(needMT.map(x => x.src), (i, v) => {
       const x = needMT[i]; x.el.classList.remove('pending');
       if (v) { x.el.textContent = v; x.el.classList.add('mt'); } else { x.el.classList.add('missing'); x.el.textContent = 'No translation available.'; }
-      done++; if (tok === loadToken) { prog.style.width = (100*done/needMT.length)+'%'; status.textContent = done < needMT.length ? `Translating ${done}/${needMT.length}` : (translateBroken ? 'Translation failed' : ''); if (done === needMT.length) setTimeout(() => { if (tok===loadToken) prog.style.width = '0%'; }, 600); }
+      done++; if (tok === loadToken) { prog.style.width = (100*done/needMT.length)+'%'; status.textContent = done < needMT.length ? `Translating ${done}/${needMT.length}` + (translateVia && translateVia!=='Google' ? ' via '+translateVia : '') : (translateBroken ? 'Translation failed' : (translateVia && translateVia!=='Google' ? 'Translated via '+translateVia : '')); if (done === needMT.length) setTimeout(() => { if (tok===loadToken) prog.style.width = '0%'; }, 600); }
     });
     if (translateBroken && tok === loadToken) main.insertBefore(el('div', {class:'banner err'}, 'Translation failed (' + translateError + '); untranslated segments show the Hebrew only.'), body);
   }
